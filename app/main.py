@@ -1,0 +1,62 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.core.config import settings
+
+# Import API routers
+from app.api.auth import router as auth_router
+from app.api.admin import router as admin_router
+from app.api.students import router as students_router
+from app.api.questions import router as questions_router
+from app.api.lessons import router as lessons_router
+from app.api.practice import router as practice_router
+from app.api.coding import router as coding_router
+from app.api.tests import router as tests_router
+from app.api.friends import router as friends_router
+from app.api.battle_rooms import router as battle_router
+from app.api.leaderboard import router as leaderboard_router
+from app.api.reports import router as reports_router
+from app.api.notifications import router as notifications_router
+
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    version=settings.VERSION,
+    description="Backend API for CodeArena – Learn, Practice & Compete platform"
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include Routers under /api/v1
+api_prefix = settings.API_V1_STR
+app.include_router(auth_router, prefix=api_prefix)
+app.include_router(admin_router, prefix=api_prefix)
+app.include_router(students_router, prefix=api_prefix)
+app.include_router(questions_router, prefix=api_prefix)
+app.include_router(lessons_router, prefix=api_prefix)
+app.include_router(practice_router, prefix=api_prefix)
+app.include_router(coding_router, prefix=api_prefix)
+app.include_router(tests_router, prefix=api_prefix)
+app.include_router(friends_router, prefix=api_prefix)
+app.include_router(battle_router, prefix=api_prefix)
+app.include_router(leaderboard_router, prefix=api_prefix)
+app.include_router(reports_router, prefix=api_prefix)
+app.include_router(notifications_router, prefix=api_prefix)
+
+@app.get("/")
+def root():
+    return {
+        "platform": "CodeArena – Learn, Practice & Compete",
+        "status": "online",
+        "api_docs": "/docs",
+        "version": settings.VERSION
+    }
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
