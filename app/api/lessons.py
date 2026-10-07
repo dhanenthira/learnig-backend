@@ -1,34 +1,50 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
+from sqlalchemy.orm import Session
 from app.schemas.lesson import ModuleSummary, LessonDetail, LessonProgressUpdate
 from app.schemas.user import UserResponse
 from app.api.auth import get_current_user
-from app.services.data_store import data_store
+from app.core.database import get_db
+from app.models.sql_models import LearningModuleModel, LessonModel, UserModel
 
 router = APIRouter(prefix="/lessons", tags=["Learning Module"])
 
 @router.get("/modules", response_model=List[ModuleSummary])
-def get_all_modules():
-    return [ModuleSummary(**m) for m in data_store.modules.values()]
+def get_all_modules(db: Session = Depends(get_db)):
+    if not db:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    modules = db.query(LearningModuleModel).all()
+    return [ModuleSummary.model_validate(m, from_attributes=True) for m in modules]
 
 @router.get("/{lesson_id}", response_model=LessonDetail)
-def get_lesson_detail(lesson_id: str):
-    lesson = data_store.lessons.get(lesson_id)
+def get_lesson_detail(lesson_id: str, db: Session = Depends(get_db)):
+    if not db:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    lesson = db.query(LessonModel).filter(LessonModel.id == lesson_id).first()
     if not lesson:
         raise HTTPException(status_code=404, detail="Lesson not found")
-    return LessonDetail(**lesson)
+    return LessonDetail.model_validate(lesson, from_attributes=True)
 
 @router.post("/progress")
-def update_lesson_progress(progress: LessonProgressUpdate, current_user: UserResponse = Depends(get_current_user)):
-    lesson = data_store.lessons.get(progress.lesson_id)
+def update_lesson_progress(
+    progress: LessonProgressUpdate,
+    current_user: UserResponse = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not db:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+
+    lesson = db.query(LessonModel).filter(LessonModel.id == progress.lesson_id).first()
     if not lesson:
         raise HTTPException(status_code=404, detail="Lesson not found")
-    lesson["is_completed"] = progress.completed
+        
+    lesson.is_completed = progress.completed
     
-    # Update user points if newly completed
+    # Update user points in MySQL if newly completed
     if progress.completed:
-        user = data_store.users.get(current_user.id)
+        user = db.query(UserModel).filter(UserModel.id == current_user.id).first()
         if user:
-            user["total_points"] = user.get("total_points", 0) + 15
+            user.total_points = (user.total_points or 0) + 15
             
+    db.commit()
     return {"status": "success", "lesson_id": progress.lesson_id, "is_completed": progress.completed}

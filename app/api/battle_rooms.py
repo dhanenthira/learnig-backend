@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from typing import List, Optional
+from sqlalchemy.orm import Session
 from app.schemas.battle import (
     BattleRoomCreate,
     BattleRoomResponse,
@@ -10,7 +11,9 @@ from app.schemas.battle import (
 from app.schemas.user import UserResponse
 from app.api.auth import get_current_user
 from app.services.battle_manager import battle_manager
-from app.services.data_store import data_store
+from app.core.database import SessionLocal, get_db
+from app.models.sql_models import QuestionModel
+from app.schemas.question import QuestionResponse
 
 router = APIRouter(prefix="/battle", tags=["Multiplayer Battle Rooms"])
 
@@ -110,7 +113,14 @@ async def battle_websocket(websocket: WebSocket, room_code: str, user_id: str):
                 })
                 
             elif event == "start_match":
-                questions = list(data_store.questions.values())[:5]
+                questions = []
+                if SessionLocal:
+                    db = SessionLocal()
+                    try:
+                        db_qs = db.query(QuestionModel).limit(5).all()
+                        questions = [QuestionResponse.model_validate(q, from_attributes=True).model_dump() for q in db_qs]
+                    finally:
+                        db.close()
                 room = battle_manager.start_battle(code, user_id, questions)
                 await battle_manager.broadcast_to_room(code, {
                     "event": "match_started",

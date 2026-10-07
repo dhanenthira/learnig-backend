@@ -1,138 +1,143 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 from app.schemas.user import UserCreate, UserLogin, UserResponse, TokenResponse, RoleEnum
 from app.core.security import create_access_token, decode_token, oauth2_scheme, verify_password, get_password_hash
-from app.services.data_store import data_store
+from app.core.database import get_db
+from app.models.sql_models import UserModel
 from datetime import datetime
 import uuid
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-def get_current_user(token: str = Depends(oauth2_scheme)) -> UserResponse:
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> UserResponse:
+    if not db:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database connection unavailable")
+
     if not token:
-        # Default to student_01 if no auth provided for frictionless development
-        user_data = data_store.users.get("user_student_01")
-        if user_data:
-            return UserResponse(**user_data)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     
     if token == "admin_demo_jwt_token":
-        admin_data = data_store.users.get("user_admin_01")
-        if admin_data:
-            return UserResponse(**admin_data)
+        db_admin = db.query(UserModel).filter(UserModel.role == "admin").first()
+        if db_admin:
+            return UserResponse.model_validate(db_admin, from_attributes=True)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin user not found in database")
 
     payload = decode_token(token)
     if not payload:
-        # Fallback to admin if token contains admin
-        if "admin" in token.lower():
-            admin_data = data_store.users.get("user_admin_01")
-            if admin_data:
-                return UserResponse(**admin_data)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     
     user_id = payload.get("sub")
-    user_data = data_store.users.get(user_id)
-    if not user_data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return UserResponse(**user_data)
+    db_user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found in database")
+    return UserResponse.model_validate(db_user, from_attributes=True)
 
-def get_current_admin_user(token: str = Depends(oauth2_scheme)) -> UserResponse:
-    if not token or token == "admin_demo_jwt_token" or "admin" in str(token).lower():
-        admin_data = data_store.users.get("user_admin_01")
-        if admin_data:
-            return UserResponse(**admin_data)
+def get_current_admin_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> UserResponse:
+    if not db:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database connection unavailable")
+
+    if token == "admin_demo_jwt_token":
+        db_admin = db.query(UserModel).filter(UserModel.role == "admin").first()
+        if db_admin:
+            return UserResponse.model_validate(db_admin, from_attributes=True)
             
-    current_user = get_current_user(token)
+    current_user = get_current_user(token, db)
     if current_user.role != RoleEnum.ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
     return current_user
 
 @router.post("/login", response_model=TokenResponse)
-def login(login_data: UserLogin):
-    user_match = None
-    for u in data_store.users.values():
-        if u["email"].lower() == login_data.email.lower():
-            user_match = u
-            break
-            
-    if not user_match or not verify_password(login_data.password, user_match["password"]):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+def login(login_data: UserLogin, db: Session = Depends(get_db)):
+    if not db:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database connection unavailable")
+
+    email_clean = login_data.email.strip().lower()
+    db_user = db.query(UserModel).filter(UserModel.email.ilike(email_clean)).first()
     
-    token = create_access_token(subject=user_match["id"], role=user_match["role"])
+    if not db_user or not verify_password(login_data.password, db_user.password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+
+    token = create_access_token(subject=db_user.id, role=db_user.role)
     return TokenResponse(
         access_token=token,
         token_type="bearer",
-        user=UserResponse(**user_match)
+        user=UserResponse.model_validate(db_user, from_attributes=True)
     )
 
 @router.post("/register", response_model=TokenResponse)
-def register(user_in: UserCreate):
-    for u in data_store.users.values():
-        if u["email"].lower() == user_in.email.lower():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
-            
+def register(user_in: UserCreate, db: Session = Depends(get_db)):
+    if not db:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database connection unavailable")
+
+    email_clean = user_in.email.strip().lower()
+    existing_user = db.query(UserModel).filter(UserModel.email.ilike(email_clean)).first()
+    if existing_user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+
     new_id = f"user_{uuid.uuid4().hex[:8]}"
-    student_num = 8000 + len(data_store.users)
-    student_id = f"CA-2026-{student_num}"
+    count_users = db.query(UserModel).count()
+    student_id = f"CA-2026-{8000 + count_users}"
+    hashed_pwd = get_password_hash(user_in.password)
     
-    user_dict = {
-        "id": new_id,
-        "student_id": student_id,
-        "email": user_in.email,
-        "password": user_in.password, # or get_password_hash(user_in.password)
-        "name": user_in.name,
-        "role": user_in.role or RoleEnum.STUDENT,
-        "college_name": user_in.college_name or "Engineering College",
-        "department": user_in.department or "Computer Science",
-        "graduation_year": user_in.graduation_year or 2026,
-        "bio": user_in.bio or "CodeArena enthusiast",
-        "avatar_url": f"https://api.dicebear.com/7.x/avataaars/svg?seed={user_in.name}",
-        "created_at": datetime.utcnow(),
-        "streak_days": 1,
-        "total_points": 100,
-        "problems_solved": 0,
-        "questions_solved": 0,
-        "overall_accuracy": 0.0,
-        "coding_problems_solved": 0,
-        "battles_won": 0,
-        "followers_count": 0,
-        "following_count": 0,
-        "is_active": True
-    }
+    new_user = UserModel(
+        id=new_id,
+        student_id=student_id,
+        email=email_clean,
+        password=hashed_pwd,
+        name=user_in.name,
+        role=user_in.role.value if hasattr(user_in.role, 'value') else (user_in.role or "student"),
+        college_name=user_in.college_name or "",
+        department=user_in.department or "",
+        graduation_year=user_in.graduation_year or 2026,
+        bio=user_in.bio or "",
+        avatar_url=f"https://api.dicebear.com/7.x/avataaars/svg?seed={user_in.name}",
+        created_at=datetime.utcnow(),
+        streak_days=0,
+        total_points=0,
+        problems_solved=0,
+        questions_solved=0,
+        overall_accuracy=0.0,
+        coding_problems_solved=0,
+        battles_won=0,
+        followers_count=0,
+        following_count=0,
+        is_active=True
+    )
     
-    data_store.users[new_id] = user_dict
-    token = create_access_token(subject=new_id, role=user_dict["role"])
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    token = create_access_token(subject=new_user.id, role=new_user.role)
     return TokenResponse(
         access_token=token,
         token_type="bearer",
-        user=UserResponse(**user_dict)
+        user=UserResponse.model_validate(new_user, from_attributes=True)
     )
 
 @router.post("/admin/login", response_model=TokenResponse)
-def admin_login(login_data: UserLogin):
-    user_match = None
-    for u in data_store.users.values():
-        if u["email"].lower() == login_data.email.lower() and u["role"] == "admin":
-            user_match = u
-            break
-            
-    if not user_match and (login_data.email.lower() == "admin@codearena.com" or "admin" in login_data.email.lower()):
-        user_match = data_store.users.get("user_admin_01")
-            
-    if not user_match:
+def admin_login(login_data: UserLogin, db: Session = Depends(get_db)):
+    if not db:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database connection unavailable")
+
+    email_clean = login_data.email.strip().lower()
+    db_admin = db.query(UserModel).filter(UserModel.email.ilike(email_clean), UserModel.role == "admin").first()
+
+    if not db_admin:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin credentials or role unauthorized")
 
     valid_pass = (
-        verify_password(login_data.password, user_match["password"])
+        verify_password(login_data.password, db_admin.password)
         or login_data.password in ["admin123", "adminpassword123", "admin", "admin@123"]
     )
     if not valid_pass:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin credentials")
         
-    token = create_access_token(subject=user_match["id"], role="admin")
+    token = create_access_token(subject=db_admin.id, role="admin")
     return TokenResponse(
         access_token=token,
         token_type="bearer",
-        user=UserResponse(**user_match)
+        user=UserResponse.model_validate(db_admin, from_attributes=True)
     )
 
 @router.get("/me", response_model=UserResponse)

@@ -36,8 +36,8 @@ class QuestionCreate(QuestionBase):
 
 class QuestionResponse(QuestionBase):
     id: str
+    correct_answer: Optional[str] = None
     created_at: datetime
-    # Note: correct_answer is omitted when question is active/unsubmitted
 
 class QuestionAdminResponse(QuestionBase):
     id: str

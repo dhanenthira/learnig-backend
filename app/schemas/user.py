@@ -10,11 +10,21 @@ class RoleEnum(str, Enum):
 class UserBase(BaseModel):
     email: EmailStr
     name: str
+    username: Optional[str] = None
     role: RoleEnum = RoleEnum.STUDENT
     college_name: Optional[str] = None
     department: Optional[str] = None
     graduation_year: Optional[int] = None
     bio: Optional[str] = ""
+    avatar_url: Optional[str] = None
+
+class UserProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    username: Optional[str] = None
+    college_name: Optional[str] = None
+    department: Optional[str] = None
+    graduation_year: Optional[int] = None
+    bio: Optional[str] = None
     avatar_url: Optional[str] = None
 
 class UserCreate(UserBase):

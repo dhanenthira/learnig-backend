@@ -16,6 +16,20 @@ class Settings(BaseSettings):
     FIREBASE_CREDENTIALS_PATH: str = ""
     USE_MOCK_FIREBASE: bool = True
     
+    # MySQL Database Settings
+    MYSQL_HOST: str = "localhost"
+    MYSQL_PORT: int = 3306
+    MYSQL_USER: str = "root"
+    MYSQL_PASSWORD: str = "root"
+    MYSQL_DATABASE: str = "demo"
+    USE_MYSQL: bool = True
+
+    @property
+    def SQLALCHEMY_DATABASE_URI(self) -> str:
+        if self.MYSQL_PASSWORD:
+            return f"mysql+pymysql://{self.MYSQL_USER}:{self.MYSQL_PASSWORD}@{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DATABASE}"
+        return f"mysql+pymysql://{self.MYSQL_USER}@{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DATABASE}"
+    
     # Code Execution Sandbox
     SANDBOX_TIMEOUT_SECONDS: int = 5
     SANDBOX_MAX_MEMORY_MB: int = 256

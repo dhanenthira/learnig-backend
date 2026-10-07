@@ -1,26 +1,35 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Dict, Any
+from sqlalchemy.orm import Session
 from app.schemas.report import StudentAnalyticsResponse, AdminAnalyticsResponse
 from app.schemas.user import UserResponse
 from app.api.auth import get_current_user, get_current_admin_user
-from app.services.data_store import data_store
+from app.core.database import get_db
+from app.models.sql_models import UserModel, QuestionModel, CodingProblemModel, SubmissionModel
 
 router = APIRouter(prefix="/reports", tags=["Reports & Analytics"])
 
 @router.get("/student/{user_id}", response_model=StudentAnalyticsResponse)
-def get_student_report(user_id: str, current_user: UserResponse = Depends(get_current_user)):
-    user = data_store.users.get(user_id)
+def get_student_report(
+    user_id: str,
+    current_user: UserResponse = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not db:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
     return StudentAnalyticsResponse(
         total_questions=850,
-        questions_solved=user.get("questions_solved", 380),
-        overall_accuracy=user.get("overall_accuracy", 88.2),
-        coding_problems_solved=user.get("coding_problems_solved", 56),
-        streak_days=user.get("streak_days", 14),
+        questions_solved=user.questions_solved or 380,
+        overall_accuracy=user.overall_accuracy or 88.2,
+        coding_problems_solved=user.coding_problems_solved or 56,
+        streak_days=user.streak_days or 14,
         rank=2,
-        total_points=user.get("total_points", 4850),
+        total_points=user.total_points or 4850,
         category_performances=[
             {"category": "Quantitative Aptitude", "total_attempted": 180, "correct": 162, "accuracy": 90.0, "total_time_minutes": 140.0},
             {"category": "Computer Science Core", "total_attempted": 120, "correct": 105, "accuracy": 87.5, "total_time_minutes": 95.0},
@@ -45,13 +54,23 @@ def get_student_report(user_id: str, current_user: UserResponse = Depends(get_cu
     )
 
 @router.get("/admin", response_model=AdminAnalyticsResponse)
-def get_admin_analytics(current_admin: UserResponse = Depends(get_current_admin_user)):
-    students_list = [u for u in data_store.users.values() if u.get("role") == "student"]
+def get_admin_analytics(
+    current_admin: UserResponse = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    if not db:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+
+    students = db.query(UserModel).filter(UserModel.role == "student").all()
+    q_count = db.query(QuestionModel).count()
+    cp_count = db.query(CodingProblemModel).count()
+    sub_count = db.query(SubmissionModel).count()
+
     return AdminAnalyticsResponse(
-        total_students=len(students_list),
-        active_students_today=max(1, int(len(students_list) * 0.8)),
-        published_questions=len(data_store.questions) + len(data_store.coding_problems),
-        total_submissions=3850,
+        total_students=len(students),
+        active_students_today=max(1, int(len(students) * 0.8)),
+        published_questions=q_count + cp_count,
+        total_submissions=max(sub_count, 120),
         category_breakdown={"Aptitude": 45, "Technical": 35, "Coding": 20},
         weekly_registrations=[
             {"week": "Week 1", "registrations": 42},

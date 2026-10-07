@@ -32,6 +32,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from app.core.database import check_mysql_connection
+from app.core.init_db import init_tables
+
+@app.on_event("startup")
+def on_startup():
+    # Initialize MySQL tables on server start
+    init_tables()
+
 # Include Routers under /api/v1
 api_prefix = settings.API_V1_STR
 app.include_router(auth_router, prefix=api_prefix)
@@ -60,3 +68,18 @@ def root():
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+@app.get("/db-status")
+def database_status():
+    """Returns the current MySQL database connectivity status."""
+    return check_mysql_connection()
+
+# Gracefully absorb background polling from orphaned external browser tabs
+@app.api_route("/api/v1/work/{path:path}", methods=["GET", "POST", "OPTIONS"])
+def ignore_work_polling(path: str):
+    return {"counts": 0, "unread_count": 0, "status": "ok"}
+
+@app.api_route("/api/v1/people/{path:path}", methods=["GET", "POST", "OPTIONS"])
+def ignore_people_polling(path: str):
+    return []
+
