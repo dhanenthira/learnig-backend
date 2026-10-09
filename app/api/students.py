@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from app.schemas.user import UserResponse
 from app.api.auth import get_current_user
+from app.core.security import oauth2_scheme
 from app.core.database import get_db
 from app.models.sql_models import UserModel, DailySetModel, LearningModuleModel, AssessmentTestModel, QuestionModel
 from app.schemas.practice import DailySetSummary
@@ -11,17 +12,27 @@ from app.schemas.test import AssessmentTest
 
 router = APIRouter(prefix="/students", tags=["Students"])
 
+def get_optional_current_user(token: Optional[str] = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> Optional[UserResponse]:
+    if not token or not db:
+        return None
+    try:
+        return get_current_user(token=token, db=db)
+    except Exception:
+        return None
+
 @router.get("/dashboard")
 def get_student_dashboard(
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: Optional[UserResponse] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     if not db:
         raise HTTPException(status_code=503, detail="Database unavailable")
 
-    user = db.query(UserModel).filter(UserModel.id == current_user.id).first()
+    user = None
+    if current_user:
+        user = db.query(UserModel).filter(UserModel.id == current_user.id).first()
     if not user:
-        user = db.query(UserModel).first()
+        user = db.query(UserModel).filter(UserModel.role == "student").first() or db.query(UserModel).first()
     
     daily_sets = db.query(DailySetModel).all()
     modules = db.query(LearningModuleModel).all()
